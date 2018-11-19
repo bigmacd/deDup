@@ -15,7 +15,7 @@ htmlEnd = """
 </html>
 """
 
-db = DeDupDatabase()
+db = DeDupDatabase(False)
 rows = db.getHashGroups()
 
 rowcolor = "green"
