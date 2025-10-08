@@ -6,19 +6,31 @@ class DeDupDatabase:
     """
     def __init__(self, create = True):
         self.connection = sqlite3.connect("dedup.db")
-        self.connection.isolation_level = None
+        # Use explicit transactions for speed and consistency
+        # (leave default isolation_level so we can BEGIN/COMMIT manually)
         self.cursor = self.connection.cursor()
         self.resetStatement = "DROP TABLE if exists dups"
         self.createStatement = "CREATE TABLE dups (filespec VARCHAR(1024), pathspec VARCHAR(2048), md5 VARCHAR(1000))"
         self.insertStatement = "insert into dups (filespec, pathspec, md5) VALUES (?, ?, ?)"
         self.getStatement = "select pathspec, filespec from dups where md5 = '{0}'"
-        self.getHashGroupsQuery = "select md5 from dups group by md5 having count(*) > 1"
+        self.getHashGroupsQuery = "select md5 from dups group by md5 having count(*) > 1 order by md5"
+        self.createIndexStatement = "CREATE INDEX IF NOT EXISTS idx_dups_md5 ON dups(md5)"
+
+        # Pragmas to speed up bulk inserts safely enough for a local tool
+        try:
+            self.cursor.execute("PRAGMA journal_mode=WAL")
+            self.cursor.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            pass
 
         if create:
             try:
                 self.cursor.execute(self.resetStatement)
                 self.cursor.execute(self.createStatement)
-            except:
+                self.cursor.execute(self.createIndexStatement)
+                self.connection.commit()
+            except Exception:
+                # Ignore errors on initial setup/reset
                 pass
 
 
@@ -28,6 +40,18 @@ class DeDupDatabase:
         except Exception as ex:
             print(str(ex))
             print(path, file, md5)
+
+    def begin(self):
+        try:
+            self.cursor.execute("BEGIN")
+        except Exception:
+            pass
+
+    def commit(self):
+        try:
+            self.connection.commit()
+        except Exception:
+            pass
 
 
     def getHashGroups(self):

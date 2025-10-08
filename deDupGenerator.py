@@ -11,8 +11,10 @@ def generateMD5(file: str):
     Generate the hash for this file.
     """
     hash_md5 = hashlib.md5()
+    # Use a larger chunk size to reduce syscalls while keeping memory modest
+    chunk_size = 1024 * 1024
     with open(file, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
+        for chunk in iter(lambda: f.read(chunk_size), b""):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
 
@@ -33,10 +35,17 @@ def processDirectory(directory: str, db: DeDupDatabase):
     """
     try:
         for entry in os.scandir(directory):
-            if entry.is_dir():
+            # Skip symlinks to avoid cycles and redundant hashing
+            if entry.is_symlink():
+                continue
+            if entry.is_dir(follow_symlinks=False):
                 processDirectory(entry.path, db)
-            elif entry.is_file():
-                processFile(entry.path, db)
+            elif entry.is_file(follow_symlinks=False):
+                try:
+                    print(f"Processing file: {entry.path}")
+                    processFile(entry.path, db)
+                except (PermissionError, OSError) as ex:
+                    print("file error: {0}".format(ex))
     except PermissionError as ex:
         print ("permission error: {0}".format(ex))
 
@@ -46,8 +55,13 @@ def main(baseDirectory: str):
     Set up the database and begin processing files.
     """
     db = DeDupDatabase()
-    processDirectory(baseDirectory, db)
- 
+    # Wrap the entire run in a single transaction for much faster inserts
+    db.begin()
+    try:
+        processDirectory(baseDirectory, db)
+    finally:
+        db.commit()
+
 
 if __name__ == "__main__":
     """
